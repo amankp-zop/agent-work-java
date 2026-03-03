@@ -19,17 +19,13 @@ public class AlertAnalyzerState extends AgentState {
     public static final String ANALYSIS_SUMMARY = "analysis_summary";
     public static final String ALERT_PAYLOAD = "alert_payload";
     public static final String JIRA_RESULT = "jira_result";
-    public static final String REVIEWER_FEEDBACK = "reviewer_feedback";
-    public static final String REVIEW_ATTEMPTS = "review_attempts";
 
     public static final Map<String, Channel<?>> SCHEMA = Map.of(
             MESSAGES, Channels.appender(ArrayList::new),
             VERDICT, Channels.base(() -> ""),
             ANALYSIS_SUMMARY, Channels.base(() -> ""),
             ALERT_PAYLOAD, Channels.base(() -> ""),
-            JIRA_RESULT, Channels.base(() -> ""),
-            REVIEWER_FEEDBACK, Channels.base(() -> ""),
-            REVIEW_ATTEMPTS, Channels.base(() -> 0));
+            JIRA_RESULT, Channels.base(() -> ""));
 
     public AlertAnalyzerState(Map<String, Object> initData) {
         super(initData);
@@ -53,13 +49,5 @@ public class AlertAnalyzerState extends AgentState {
 
     public String jiraResult() {
         return this.<String>value(JIRA_RESULT).orElse("");
-    }
-
-    public String reviewerFeedback() {
-        return this.<String>value(REVIEWER_FEEDBACK).orElse("");
-    }
-
-    public int reviewAttempts() {
-        return this.<Integer>value(REVIEW_ATTEMPTS).orElse(0);
     }
 }
