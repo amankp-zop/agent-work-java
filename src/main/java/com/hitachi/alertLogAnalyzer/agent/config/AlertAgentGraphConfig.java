@@ -4,14 +4,13 @@ import com.hitachi.alertLogAnalyzer.agent.nodes.AlertAnalyzerAgent;
 import com.hitachi.alertLogAnalyzer.agent.nodes.AlertAnalyzerAiService;
 import com.hitachi.alertLogAnalyzer.agent.nodes.JiraTicketCreatorAgent;
 import com.hitachi.alertLogAnalyzer.agent.nodes.ResultLoggerAgent;
-import com.hitachi.alertLogAnalyzer.agent.nodes.ReviewerAgent;
 import com.hitachi.alertLogAnalyzer.agent.state.AlertAnalyzerState;
 import com.hitachi.alertLogAnalyzer.agent.tools.AlertHistoryTool;
 import com.hitachi.alertLogAnalyzer.agent.tools.AlertPatternTool;
 import com.hitachi.alertLogAnalyzer.agent.tools.MetricCorrelationTool;
 import com.hitachi.alertLogAnalyzer.agent.tools.ServiceHealthTool;
+import dev.langchain4j.model.bedrock.BedrockChatModel;
 import dev.langchain4j.model.chat.ChatModel;
-import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.service.AiServices;
 import lombok.extern.slf4j.Slf4j;
 import org.bsc.langgraph4j.CompiledGraph;
@@ -19,6 +18,7 @@ import org.bsc.langgraph4j.StateGraph;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import software.amazon.awssdk.regions.Region;
 
 import java.util.Map;
 
@@ -33,10 +33,9 @@ import static org.bsc.langgraph4j.action.AsyncNodeAction.node_async;
  * Graph topology:
  * 
  * <pre>
- * START → analyzer → reviewer → conditional
- *  ├── "APPROVED_ACTIONABLE"     → jira_creator → END
- *  ├── "APPROVED_NON_ACTIONABLE" → result_logger → END
- *  └── "NEEDS_REWORK"            → analyzer  (loop back, max 3 iterations)
+ * START → analyzer → conditional
+ *  ├── "ACTIONABLE"       → jira_creator → END
+ *  └── "NON_ACTIONABLE"   → result_logger → END
  * </pre>
  */
 @Configuration
@@ -47,17 +46,14 @@ public class AlertAgentGraphConfig {
 
         @Bean
         public ChatModel alertChatLanguageModel(
-                        @Value("${groq.api.key}") String apiKey,
-                        @Value("${groq.model}") String model,
-                        @Value("${groq.base.url}") String baseUrl) {
+                        @Value("${bedrock.model.id}") String modelId,
+                        @Value("${bedrock.region}") String region) {
 
-                log.info("🤖 Initializing LLM: model={}, baseUrl={}", model, baseUrl);
+                log.info("🤖 Initializing Bedrock LLM: modelId={}, region={}", modelId, region);
 
-                return OpenAiChatModel.builder()
-                                .apiKey(apiKey)
-                                .modelName(model)
-                                .baseUrl(baseUrl)
-                                .temperature(0.0)
+                return BedrockChatModel.builder()
+                                .modelId(modelId)
+                                .region(Region.of(region))
                                 .build();
         }
 
@@ -125,7 +121,6 @@ public class AlertAgentGraphConfig {
 
                 // Instantiate agent nodes
                 var analyzerAgent = new AlertAnalyzerAgent(alertAnalyzerAiService);
-                var reviewerAgent = new ReviewerAgent(alertChatLanguageModel);
                 var jiraCreatorAgent = new JiraTicketCreatorAgent(alertChatLanguageModel);
                 var resultLoggerAgent = new ResultLoggerAgent();
 
@@ -134,7 +129,6 @@ public class AlertAgentGraphConfig {
 
                                 // === NODES ===
                                 .addNode("analyzer", node_async(analyzerAgent))
-                                .addNode("reviewer", node_async(reviewerAgent))
                                 .addNode("jira_creator", node_async(jiraCreatorAgent))
                                 .addNode("result_logger", node_async(resultLoggerAgent))
 
@@ -143,27 +137,21 @@ public class AlertAgentGraphConfig {
                                 // Entry point: every alert starts at the analyzer
                                 .addEdge(START, "analyzer")
 
-                                // Analyzer always goes to reviewer for quality gating
-                                .addEdge("analyzer", "reviewer")
-
-                                // Reviewer → conditional routing based on review decision
-                                .addConditionalEdges("reviewer",
+                                // Analyzer → conditional routing based on analysis verdict
+                                .addConditionalEdges("analyzer",
                                                 edge_async(state -> {
                                                         String verdict = state.verdict();
-                                                        log.info("🔀 Routing based on reviewer verdict: {}", verdict);
+                                                        log.info("🔀 Routing based on analyzer verdict: {}", verdict);
 
-                                                        if (verdict.contains("APPROVED_ACTIONABLE")) {
-                                                                return "APPROVED_ACTIONABLE";
-                                                        } else if (verdict.contains("APPROVED_NON_ACTIONABLE")) {
-                                                                return "APPROVED_NON_ACTIONABLE";
+                                                        if ("ACTIONABLE".equals(verdict)) {
+                                                                return "ACTIONABLE";
                                                         } else {
-                                                                return "NEEDS_REWORK";
+                                                                return "NON_ACTIONABLE";
                                                         }
                                                 }),
                                                 Map.of(
-                                                                "APPROVED_ACTIONABLE", "jira_creator",
-                                                                "APPROVED_NON_ACTIONABLE", "result_logger",
-                                                                "NEEDS_REWORK", "analyzer"))
+                                                                "ACTIONABLE", "jira_creator",
+                                                                "NON_ACTIONABLE", "result_logger"))
 
                                 // Both terminal nodes go to END
                                 .addEdge("jira_creator", END)

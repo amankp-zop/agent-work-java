@@ -13,8 +13,8 @@ import java.util.Map;
  * autonomously decides which tools to call (alert history, metrics,
  * service health, pattern analysis) based on the alert context.
  * <p>
- * If the reviewer has sent feedback (from a previous iteration),
- * it is included in the prompt so the analyzer can address the concerns.
+ * The analysis verdict (ACTIONABLE / NON_ACTIONABLE) is used directly
+ * by the graph to route to JIRA ticket creation or simple logging.
  */
 @RequiredArgsConstructor
 @Slf4j
@@ -24,32 +24,22 @@ public class AlertAnalyzerAgent implements NodeAction<AlertAnalyzerState> {
 
     @Override
     public Map<String, Object> apply(AlertAnalyzerState state) {
-        log.info("🔬 [AlertAnalyzerAgent] Starting alert analysis (attempt #{})...",
-                state.reviewAttempts() + 1);
+        log.info("🔬 [AlertAnalyzerAgent] Starting alert analysis...");
 
         String alertPayload = state.alertPayload();
-        String reviewerFeedback = state.reviewerFeedback();
 
-        // Build the user prompt — include reviewer feedback if this is a re-analysis
-        StringBuilder userPrompt = new StringBuilder();
-        userPrompt.append("Analyze the following Datadog alert. ")
-                .append("You have access to tools — use whichever tools you need to gather ")
-                .append("enough context for a confident verdict. You do NOT need to call all tools; ")
-                .append("choose based on what information would be most useful for this alert.\n\n");
-        userPrompt.append("=== ALERT PAYLOAD ===\n").append(alertPayload).append("\n\n");
-
-        if (reviewerFeedback != null && !reviewerFeedback.isEmpty()) {
-            log.info("🔬 [AlertAnalyzerAgent] Re-analyzing with reviewer feedback.");
-            userPrompt.append("=== REVIEWER FEEDBACK (address these concerns) ===\n")
-                    .append(reviewerFeedback).append("\n\n");
-        }
-
-        userPrompt.append("Provide your structured analysis now.");
+        // Build the user prompt
+        String userPrompt = "Analyze the following Datadog alert. " +
+                "You have access to tools — use whichever tools you need to gather " +
+                "enough context for a confident verdict. You do NOT need to call all tools; " +
+                "choose based on what information would be most useful for this alert.\n\n" +
+                "=== ALERT PAYLOAD ===\n" + alertPayload + "\n\n" +
+                "Provide your structured analysis now.";
 
         // Call the AiServices proxy — the LLM will autonomously decide which tools to
         // invoke
         log.info("🔬 [AlertAnalyzerAgent] Sending to LLM (with tool access)...");
-        String analysisResult = aiService.analyzeAlert(userPrompt.toString());
+        String analysisResult = aiService.analyzeAlert(userPrompt);
 
         log.info("🔬 [AlertAnalyzerAgent] Analysis complete.");
 
